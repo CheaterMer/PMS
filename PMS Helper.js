@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         New Time Parking System
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.1
 // @description  Parking system enhancements: Auto-refresh, Dark mode, Shortcuts
 // @author       User
 // @match        https://pms.parkingplusai.com/*
@@ -141,9 +141,10 @@
 
 (function(){
   var settingsKey='unpaid_time_settings';
-  var defaultSettings={enable:true,autoScroll:true,desktopNotify:true,soundNotify:true,nearPairNotify:false,interval:30000,timeWindowMin:3,neighborDepth:3,panelScale:1,panelCollapsed:false,showPairPanel:true,statusHighlight:true,imagePopupEnabled:true,plateEditEnabled:true,entryPreviewEnabled:true,sidebarToggleEnabled:true,show10MinButton:true,customAlarmEnabled:true,unpaidModeEnabled:false,rowClickFeePageEnabled:true,autoAlarm:false,autoAlarmInterval:10000};
+  var defaultSettings={enable:true,autoScroll:true,desktopNotify:true,soundNotify:true,nearPairNotify:false,interval:30000,timeWindowMin:3,neighborDepth:3,panelScale:1,panelCollapsed:false,showPairPanel:true,statusHighlight:true,imagePopupEnabled:true,plateEditEnabled:true,entryPreviewEnabled:true,sidebarToggleEnabled:true,show10MinButton:true,customAlarmEnabled:true,unpaidModeEnabled:false,rowClickFeePageEnabled:true,autoAlarm:true,autoAlarmInterval:10000,autoDiscountEnabled:false,sidebarAlarmMode:false,debugMode:false};
   var s=localStorage.getItem(settingsKey);var S;try{S=s?JSON.parse(s):{};}catch(e){S={};}for(var k in defaultSettings){if(!Object.prototype.hasOwnProperty.call(S,k))S[k]=defaultSettings[k];}
   function save(){localStorage.setItem(settingsKey,JSON.stringify(S))}
+  function tmLog(msg,a,b,c){if(S.debugMode){if(c!==undefined)console.log(msg,a,b,c);else if(b!==undefined)console.log(msg,a,b);else if(a!==undefined)console.log(msg,a);else console.log(msg);}}
   var _autoAlarmTimer=null;
   function startAutoAlarmInterval(){
     if(_autoAlarmTimer){clearInterval(_autoAlarmTimer);_autoAlarmTimer=null}
@@ -156,11 +157,80 @@
       },interval);
     }
   }
+
+  // 알람 렌더링 함수 오버라이드 (읽은 알람 유지)
+  var _origRender=window.renderAlarmTabContents;
+  window.renderAlarmTabContents=function(data){
+     if(!data)return;
+     
+     // 최근 알람 데이터 캐시 (resolveAlarmLink에서 사용)
+     try {
+         var allData = [];
+         ['ALL','PARKING_RECORD','DEVICE'].forEach(function(k){
+             if(data[k] && data[k].data) allData = allData.concat(data[k].data);
+         });
+         window.__tm_last_alarms = allData;
+     } catch(e) {}
+
+     // 1. 읽은 알람 목록 가져오기 (localStorage)
+     var checked=[];
+     try{checked=JSON.parse(localStorage.getItem('tm_alarm_checked')||'[]')}catch(e){}
+     
+     // 2. data에 읽은 알람이 빠져있다면 채워넣기? 
+     // 하지만 data는 서버에서 온 것. 서버가 안 보내주면 우리가 알 방법이 없음 (내용을 모름).
+     // 따라서, 'resolveAlarmLink'를 호출할 때 해당 알람의 '데이터'를 어딘가에 저장해뒀어야 함.
+     // 하지만 지금 구조상 복잡함.
+     // 차선책: 그냥 서버 데이터를 렌더링하되, 'checked'에 있는 ID는 스타일을 적용.
+     // 만약 서버가 '읽은 알람'을 아예 안 보내준다면, 화면에서 사라지는 건 어쩔 수 없음 (사용자가 '삭제' 안 해도).
+     // 하지만 사용자가 "알람을 확인했다고만 표시해주고 삭제 가능해야함" 이라고 했으므로,
+     // 서버가 '읽음' 상태인 알람도 내려주는지 확인 필요.
+     // 보통 'unread'만 카운트하지만 리스트는 다 줄 수도 있음.
+     // 만약 리스트에서 사라진다면, 우리가 강제로 유지해야 함.
+     
+     // 강제 유지를 위해: 알람 클릭 시 'tm_kept_alarms'에 내용 저장.
+     // 렌더링 시 'tm_kept_alarms' 내용을 합침.
+     
+     var kept={};
+     try{kept=JSON.parse(localStorage.getItem('tm_kept_alarms')||'{}')}catch(e){}
+     
+     // data.ALL.data 등이 배열임.
+     ['ALL','PARKING_RECORD','DEVICE'].forEach(function(key){
+         if(data[key] && data[key].data){
+             var list=data[key].data;
+             var ids=list.map(function(item){return String(item.id)});
+             
+             // kept에 있는 것 중 현재 리스트에 없는 것을 추가
+             for(var k in kept){
+                 if(ids.indexOf(k)<0){
+                     // 해당 탭에 맞는 알람인지 확인 필요하지만 단순화를 위해 ALL이나 적절히 분배?
+                     // 여기서는 간단히 'ALL'에는 다 넣고, 나머지는 타입 보고 넣기
+                     var item=kept[k];
+                     if(key==='ALL' || (key==='PARKING_RECORD' && /입차|출차|정산|미납/.test(item.typeDescription)) || (key==='DEVICE' && !/입차|출차|정산|미납/.test(item.typeDescription))){
+                         list.push(item);
+                     }
+                 }
+             }
+             
+             // 날짜순 정렬 (최신순)
+             list.sort(function(a,b){
+                 // dateDiffFromNow 문자열 파싱은 어려우므로, 그냥 둠 (이미 섞여있을 수 있음)
+                 // 정확히 하려면 regDate가 있어야 함. kept에 regDate 저장 필요.
+                 return 0; 
+             });
+         }
+     });
+     
+     if(typeof _origRender==='function') _origRender(data);
+     else if(typeof window.renderAlarmTabContents==='function' && window.renderAlarmTabContents!==arguments.callee) window.renderAlarmTabContents(data);
+  };
+
   function addStyle(css){var st=document.createElement('style');st.textContent=css;document.head.appendChild(st)}
   addStyle('.tm-near-highlight{background:#ffe9e9!important;transition:background .6s}.tm-near-pair{outline:2px solid #ff7675}.tm-near-panel{position:fixed;left:10px;bottom:10px;z-index:99999;background:#fff;border:1px solid #ddd;padding:6px 8px;border-radius:6px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.1)}.tm-near-panel label{margin-right:8px}.tm-near-panel button{margin-left:6px}.tm-reviewed{background:#fff6cc!important;outline:2px solid #f1c40f}.tm-review-panel{position:fixed;left:10px;bottom:70px;z-index:99999;background:#fff;border:1px solid #ddd;padding:6px 8px;border-radius:6px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.1)}.btn-review{margin-left:6px}'+
            'html.tm-dark .tm-near-panel,html.tm-dark .tm-review-panel,html.tm-dark .tm-master-panel{background:#2b2d31!important;border-color:#3c3c3c!important;color:#e5e5e5!important;box-shadow:0 2px 8px rgba(0,0,0,.6)!important}html.tm-dark .tm-master-panel label{color:#e5e5e5!important}html.tm-dark .tm-master-btn{background:#424242!important;color:#e5e5e5!important;border-color:#616161!important}html.tm-dark .tm-sidebar-btn{background:#424242!important;color:#e5e5e5!important;border-color:#616161!important}');
   addStyle('.tm-near-panel .tm-header{display:flex;align-items:center;gap:6px}.tm-near-panel .tm-body{margin-top:6px}.tm-near-panel.collapsed .tm-body{display:none}');
-  addStyle('.tm-toast{position:fixed;right:12px;bottom:12px;z-index:999999;max-width:320px;background:#333;color:#fff;padding:10px 12px;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.2);font-size:13px;line-height:1.4}.tm-toast strong{display:block;margin-bottom:6px;font-size:14px}');
+  addStyle('.tm-toast-container{position:fixed;top:10px;left:0;right:0;z-index:999999;display:flex;flex-direction:column;align-items:center;pointer-events:none}');
+  addStyle('@keyframes tm-slide-down{from{transform:translateY(-100%);opacity:0}to{transform:translateY(0);opacity:1}}');
+  addStyle('.tm-toast{pointer-events:auto;background:rgba(0,0,0,0.8);color:#fff;padding:8px 16px;border-radius:20px;box-shadow:0 4px 12px rgba(0,0,0,0.15);font-size:14px;line-height:1.4;margin-bottom:8px;text-align:center;min-width:200px;max-width:80%;display:flex;align-items:center;justify-content:center;gap:8px;animation:tm-slide-down 0.3s ease-out;backdrop-filter:blur(4px)} .tm-toast strong{font-weight:600;margin-right:4px}');
   addStyle('.tm-alarm-target{background:transparent!important;outline:2px solid #ffee58;box-shadow:0 0 0 2px rgba(255,238,88,.9),0 0 8px rgba(255,238,88,.9)}.tm-alarm-clicked{background:transparent!important;outline:2px solid #69f0ae;box-shadow:0 0 0 2px rgba(105,240,174,.9),0 0 8px rgba(105,240,174,.9)}');
   addStyle('.tm-status-paid{background:#e3f2fd!important;outline:2px solid #2196f3}.tm-status-before{background:#fff3e0!important;outline:2px solid #ff9800}.tm-status-free{background:#e8f5e9!important;outline:2px solid #2ecc71}.tm-status-unpaid{background:#ffcdd2!important;outline:2px solid #c62828}.tm-status-partial{background:#fff3e0!important;outline:2px solid #ff9800}.tm-status-undefined{background:#ffebee!important;outline:2px solid #f44336}.tm-status-system-out{background:#eceff1!important;outline:2px solid #607d8b}.tm-status-after-hours{background:#f3e5f5!important;outline:2px solid #8e24aa}'+
   'html.tm-dark .tm-status-paid{background:transparent!important;outline:1px solid rgba(66,165,245,.9);box-shadow:0 0 6px rgba(66,165,245,.45)}'+
@@ -196,6 +266,7 @@
   addStyle('.tm-fee-overlay .tm-fee-info{font-size:13px;line-height:1.6}');
   addStyle('.tm-fee-overlay .tm-fee-close{padding:6px 10px;border:1px solid #ccc;background:#f5f5f5;border-radius:6px;cursor:pointer}');
   addStyle('html.tm-dark .tm-fee-overlay .tm-fee-close{border-color:#3c3c3c;background:#3a3a3d;color:#e5e5e5}');
+  addStyle('.tm-checked{opacity:0.4!important;} .tm-checked .tit{text-decoration:line-through!important;color:#999!important;}');
   addStyle('html.tm-dark #custom-entry-image-box{background:#2b2d31!important;border-color:#3c3c3c!important;color:#e5e5e5!important;}');
   addStyle('html.tm-dark .modal-body,html.tm-dark .tab-content,html.tm-dark .tab-pane{background:#1e1f22!important;color:#e5e5e5!important;}');
   addStyle('html.tm-dark .section_pane,html.tm-dark .section_fee_info,html.tm-dark .section_pkg_info{background:#1e1f22!important;}');
@@ -205,7 +276,6 @@
   addStyle('html.tm-dark .tm-tab-btn{background:#2b2d31!important;color:#e5e5e5!important;border-color:#3c3c3c!important}html.tm-dark .tm-tab-btn.active{background:#252526!important;color:#ffffff!important;border-color:#3c3c3c!important}');
   function qs(sel,root){return (root||document).querySelector(sel)}
   function qsa(sel,root){return Array.prototype.slice.call((root||document).querySelectorAll(sel))}
-  var DEBUG=false;function log(){if(!DEBUG)return;console.log.apply(console,arguments)}
   function isBeforePayStatus(txt){return /(결제\s*전|결제전)/i.test(txt||'')}
   function isPaidStatus(txt){return /결제완료|영수증/i.test(txt||'')}
   function debounce(fn,delay){var t;return function(){clearTimeout(t);var args=arguments;t=setTimeout(function(){fn.apply(null,args)},delay)}}
@@ -213,26 +283,28 @@
   var __tm_cache={data:null,timestamp:0};function getRowsCached(){if(__tm_cache.data&&Date.now()-__tm_cache.timestamp<1000){return __tm_cache.data}var data=collectRows();__tm_cache.data=data;__tm_cache.timestamp=Date.now();return data}
   function beep(){try{var ctx=window.__alarmAudioCtx||(window.__alarmAudioCtx=new (window.AudioContext||window.webkitAudioContext)());var o=ctx.createOscillator();var g=ctx.createGain();o.type='sine';o.frequency.value=1000;g.gain.value=0.6;o.connect(g);g.connect(ctx.destination);o.start();setTimeout(function(){try{o.stop()}catch(e){}},250)}catch(e){}}
   function requestNotifyPermission(){
-    console.log('[TM-ALARM] requestNotifyPermission start', {hasNotification: 'Notification'in window, permission: (window.Notification&&Notification.permission)});
+    tmLog('[TM-ALARM] requestNotifyPermission start', {hasNotification: 'Notification'in window, permission: (window.Notification&&Notification.permission)});
     if(!('Notification'in window))return;
     if(Notification.permission==='default'){
       try{
         Notification.requestPermission().then(function(p){
-          console.log('[TM-ALARM] requestNotifyPermission result', {permission: p});
+          tmLog('[TM-ALARM] requestNotifyPermission result', {permission: p});
         }).catch(function(e){
-          console.log('[TM-ALARM] requestNotifyPermission error', e);
+          tmLog('[TM-ALARM] requestNotifyPermission error', e);
         });
       }catch(e){
-        console.log('[TM-ALARM] requestNotifyPermission throw', e);
+        tmLog('[TM-ALARM] requestNotifyPermission throw', e);
       }
     }else{
-      console.log('[TM-ALARM] requestNotifyPermission skipped', {permission: Notification.permission});
+      tmLog('[TM-ALARM] requestNotifyPermission skipped', {permission: Notification.permission});
     }
   }
-  function notify(title,body,url){
+  function notify(title,body,url,forceSystem){
     var shown=false;
-    console.log('[TM-ALARM] notify start', {title: title, body: body, desktopNotify: S.desktopNotify, permission: (window.Notification&&Notification.permission)});
-    if(S.desktopNotify&&'Notification'in window){
+    tmLog('[TM-ALARM] notify start', {title: title, body: body, desktopNotify: S.desktopNotify, permission: (window.Notification&&Notification.permission), forceSystem: forceSystem});
+    
+    // forceSystem이 true이고, 데스크탑 알림 설정이 켜져있고, Notification API가 있을 때만 윈도우 알림 시도
+    if(forceSystem===true && S.desktopNotify && 'Notification'in window){
       if(Notification.permission==='granted'){
         try{
           var n=new Notification(title,{body:body});
@@ -248,12 +320,12 @@
                 window.focus();
              };
           }
-          shown=true;console.log('[TM-ALARM] notify shown (native)')
-        }catch(e){console.log('[TM-ALARM] notify error (native)', e)}
+          shown=true;tmLog('[TM-ALARM] notify shown (native)')
+        }catch(e){tmLog('[TM-ALARM] notify error (native)', e)}
       }else if(Notification.permission!=='denied'){
         try{
           Notification.requestPermission().then(function(p){
-            console.log('[TM-ALARM] notify permission result', {permission: p});
+            tmLog('[TM-ALARM] notify permission result', {permission: p});
             if(p==='granted'){
               try{
                  var n=new Notification(title,{body:body});
@@ -269,23 +341,47 @@
                        window.focus();
                     };
                  }
-                 console.log('[TM-ALARM] notify shown (native after permission)')
-              }catch(e){console.log('[TM-ALARM] notify error (native after permission)', e)}
+                 tmLog('[TM-ALARM] notify shown (native after permission)')
+              }catch(e){tmLog('[TM-ALARM] notify error (native after permission)', e)}
             }else{
-              var t=document.createElement('div');t.className='tm-toast';t.innerHTML='<strong>'+String(title||'')+'</strong>'+String(body||'');document.body.appendChild(t);setTimeout(function(){t.remove()},3500);
-              console.log('[TM-ALARM] notify shown (toast after permission)');
+              showToast(title, body);
+              tmLog('[TM-ALARM] notify shown (toast after permission)');
             }
           });
           shown=true;
-        }catch(e){console.log('[TM-ALARM] notify error (permission request)', e)}
+        }catch(e){tmLog('[TM-ALARM] notify error (permission request)', e)}
       }
     }
+    
+    // 윈도우 알림을 띄우지 않았거나(조건 불만족), 실패했으면 토스트로 표시
     if(!shown){
-      var t=document.createElement('div');t.className='tm-toast';t.innerHTML='<strong>'+String(title||'')+'</strong>'+String(body||'');document.body.appendChild(t);setTimeout(function(){t.remove()},3500);
-      console.log('[TM-ALARM] notify shown (toast fallback)');
+      showToast(title, body);
+      tmLog('[TM-ALARM] notify shown (toast fallback)');
     }
+    
     if(S.soundNotify)beep()
   }
+
+  function showToast(title, body) {
+      var container = document.getElementById('tm-toast-container');
+      if (!container) {
+          container = document.createElement('div');
+          container.id = 'tm-toast-container';
+          container.className = 'tm-toast-container';
+          document.body.appendChild(container);
+      }
+      var t = document.createElement('div');
+      t.className = 'tm-toast';
+      t.innerHTML = '<strong>' + String(title||'') + '</strong> ' + String(body||'');
+      container.appendChild(t);
+      setTimeout(function(){
+          t.style.opacity = '0';
+          t.style.transform = 'translateY(-20px)';
+          t.style.transition = 'all 0.3s ease';
+          setTimeout(function(){ t.remove(); }, 300);
+      }, 3500);
+  }
+
   var __origAlert=window.alert;
   window.alert=function(msg){
     try{
@@ -484,10 +580,103 @@
             'body.tm-sb-hidden #content, body.tm-sb-hidden #header{margin-left:0!important;width:100%!important}'+
             '#sidebar, .nav_header, #content, #header{transition:all 0.3s ease}';
     addStyle(css);
+    
+    function updateContent(){
+      var sb=document.getElementById('sidebar')||document.querySelector('.sidebar');
+      if(!sb)return;
+      
+      // 알람 모드가 켜져있고, 사이드바 토글 기능도 켜져있을 때만 적용
+      if(S.sidebarAlarmMode && S.sidebarToggleEnabled!==false){
+        // 최초 실행 시 원본 위치 파악
+        if(!window.__tm_alarm_parent){
+            // 아직 저장된 부모가 없으면, 문서 전체에서 찾음
+            var list=document.querySelector('.alarm_lst');
+            if(!list){
+                // 헤더 등에서 찾아보기
+                var header=document.querySelector('.header');
+                if(header) list=header.querySelector('.alarm_lst');
+            }
+            if(list){
+                window.__tm_alarm_parent = list.parentNode;
+                window.__tm_alarm_next = list.nextSibling;
+                window.__tm_alarm_style = list.getAttribute('style');
+            }
+        }
+
+        // 1. 원본 위치(부모)에 새로 생성된 리스트가 있는지 확인
+        var newList = null;
+        if(window.__tm_alarm_parent){
+            newList = window.__tm_alarm_parent.querySelector('.alarm_lst');
+        }
+        
+        // 2. 없다면 문서 전체에서 검색 (단, 사이드바 내부는 제외하고 싶지만 querySelector는 전체 검색함)
+        // 따라서, 사이드바에 이미 있는 경우는 제외하고 '새로 생긴' 놈을 찾아야 함.
+        if(!newList){
+            var allLists = document.querySelectorAll('.alarm_lst');
+            for(var i=0; i<allLists.length; i++){
+                if(!sb.contains(allLists[i])){
+                    newList = allLists[i];
+                    break;
+                }
+            }
+        }
+
+        // 새로 생긴 리스트가 있다면 사이드바로 이동
+        if(newList){
+             sb.innerHTML=''; // 기존 내용(구 리스트 등) 제거
+             
+             // 제목 추가
+             var tit=document.createElement('div');
+             tit.textContent='알림 내역';
+             tit.style.cssText='padding:12px;font-weight:bold;color:#fff;border-bottom:1px solid #444;background:#222';
+             sb.appendChild(tit);
+             
+             sb.appendChild(newList);
+             newList.style.cssText='display:block;max-height:92vh;overflow:auto;background:transparent;width:100%;border:none;box-shadow:none;color:#e5e5e5;padding:10px';
+             
+             // 부모 정보 갱신 (혹시 부모가 바뀌었을 수도 있으니... 하지만 보통 그대로일 것)
+             // window.__tm_alarm_parent = ... ; // 이건 유지하는 게 나음 (원상복구를 위해)
+        } 
+        else {
+            // 새로 생긴 건 없고, 사이드바에 이미 리스트가 있는지 확인
+            var existingInSb = sb.querySelector('.alarm_lst');
+            if(!existingInSb){
+                 // 사이드바에도 없고 원본에도 없다? 아직 로딩 안됐거나 에러.
+                 // 할 수 있는 게 없음.
+            } else {
+                 // 이미 사이드바에 잘 있음. 스타일만 확실히.
+                 existingInSb.style.cssText='display:block;max-height:92vh;overflow:auto;background:transparent;width:100%;border:none;box-shadow:none;color:#e5e5e5;padding:10px';
+            }
+        }
+        
+      } else {
+        // 복원 (사이드바 모드 끔)
+        if(window.__tm_sidebar_orig){
+          var list=sb.querySelector('.alarm_lst');
+          if(list && window.__tm_alarm_parent){
+             if(window.__tm_alarm_style) list.setAttribute('style', window.__tm_alarm_style);
+             else list.removeAttribute('style');
+             
+             try{
+                 window.__tm_alarm_parent.insertBefore(list, window.__tm_alarm_next);
+             }catch(e){
+                 window.__tm_alarm_parent.appendChild(list);
+             }
+          }
+          if(sb.innerHTML!==window.__tm_sidebar_orig){
+             sb.innerHTML=window.__tm_sidebar_orig;
+          }
+        }
+      }
+    }
+
     function apply(){
       if(isCollapsed&&S.sidebarToggleEnabled!==false)document.body.classList.add('tm-sb-hidden');
       else document.body.classList.remove('tm-sb-hidden');
+      
+      updateContent();
     }
+    
     if(!window.__tmSidebar){
       window.__tmSidebar={
         toggle:function(){
@@ -501,7 +690,16 @@
       };
     }
     apply();
+    if(S.sidebarAlarmMode) setTimeout(updateContent, 1000);
   }
+  
+  // 강제로 AutoAlarm 활성화 (사용자 요청 반영)
+  if(!S.autoAlarm){
+      S.autoAlarm = true;
+      if(!S.autoAlarmInterval || S.autoAlarmInterval > 10000) S.autoAlarmInterval = 10000;
+      save();
+  }
+
   function clearStatusHighlight(){
     var rows=qsa('table.tb.tb_lst tbody tr');
     for(var i=0;i<rows.length;i++){
@@ -620,11 +818,14 @@
     img.title='클릭하여 확대';
     img.onclick=function(){
         var overlay=document.createElement('div');
-        overlay.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:99999999;display:flex;align-items:center;justify-content:center;cursor:zoom-out;opacity:0;transition:opacity 0.2s ease';
+        overlay.className='tm-zoom-overlay';
+        overlay.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:99999999;display:flex;align-items:center;justify-content:center;cursor:zoom-out;opacity:0;transition:opacity 0.2s ease; overflow: hidden;';
         
         var bigImg=document.createElement('img');
-         bigImg.src=imgUrl;
-         bigImg.style.cssText='max-width:98vw;max-height:98vh;object-fit:contain;transform:scale(0.9);transition:transform 0.2s ease;box-shadow:0 0 20px rgba(0,0,0,0.5);border-radius:4px';
+        bigImg.draggable=false; // 드래그 방지
+        bigImg.ondragstart=function(){return false}; // 드래그 방지 (구형 브라우저 등 호환)
+        bigImg.src=imgUrl;
+        bigImg.style.cssText='max-width:98vw;max-height:98vh;object-fit:contain;transform:scale(0.9);transition:transform 0.2s ease;box-shadow:0 0 20px rgba(0,0,0,0.5);border-radius:4px';
          bigImg.style.filter = img.style.filter;
         
         overlay.appendChild(bigImg);
@@ -636,12 +837,87 @@
             bigImg.style.transform='scale(1)';
         });
         
-        overlay.onclick=function(){
+        // 마우스 누르고 있을 때 확대 기능 추가
+        var isZooming = false;
+        var justZoomed = false;
+        
+        // 마우스 움직임에 따라 확대 기준점 변경 (돋보기 효과)
+        overlay.onmousemove = function(e) {
+            if (isZooming) {
+                var rect = bigImg.getBoundingClientRect();
+                // 이미지 내부에서의 상대 좌표 계산 (%)
+                var x = (e.clientX - rect.left) / rect.width * 100;
+                var y = (e.clientY - rect.top) / rect.height * 100;
+                
+                bigImg.style.transformOrigin = x + '% ' + y + '%';
+            }
+        };
+        
+        overlay.onmousedown = function(e) {
+            // 왼쪽 버튼 클릭일 때만 (우클릭 등 제외)
+            if (e.button === 0) {
+                isZooming = true;
+                
+                // 클릭한 위치를 기준으로 확대 시작
+                var rect = bigImg.getBoundingClientRect();
+                var x = (e.clientX - rect.left) / rect.width * 100;
+                var y = (e.clientY - rect.top) / rect.height * 100;
+                bigImg.style.transformOrigin = x + '% ' + y + '%';
+
+                bigImg.style.transition = 'transform 0.1s ease'; 
+                bigImg.style.transform = 'scale(2)'; // 2배 확대
+                bigImg.style.cursor = 'move'; 
+                e.stopPropagation(); 
+            }
+        };
+
+        overlay.onmouseup = function(e) {
+             if (isZooming) {
+                isZooming = false;
+                justZoomed = true; // 줌 동작 직후임을 표시
+                // 클릭 이벤트가 발생할 시간 동안 플래그 유지
+                setTimeout(function(){ justZoomed = false; }, 100);
+
+                bigImg.style.transition = 'transform 0.2s ease'; 
+                bigImg.style.transform = 'scale(1)'; // 원래 크기로 복귀
+                bigImg.style.transformOrigin = 'center center'; // 중심점 복귀
+                bigImg.style.cursor = 'zoom-out';
+             }
+        };
+        
+        // 마우스가 overlay 밖으로 나가거나 할 때도 복귀
+        overlay.onmouseleave = function(e) {
+             if (isZooming) {
+                isZooming = false;
+                justZoomed = true;
+                setTimeout(function(){ justZoomed = false; }, 100);
+
+                bigImg.style.transition = 'transform 0.2s ease';
+                bigImg.style.transform = 'scale(1)';
+                bigImg.style.transformOrigin = 'center center';
+                bigImg.style.cursor = 'zoom-out';
+             }
+        };
+
+        // 클릭 시 닫기 (단, 확대 중이거나 확대 직후가 아닐 때만)
+        function closePopup(){
             overlay.style.opacity='0';
             bigImg.style.transform='scale(0.9)';
             setTimeout(function(){
                 overlay.remove();
             },200);
+            document.removeEventListener('keydown', onEsc);
+        }
+        function onEsc(e){
+            if(e.key==='Escape') closePopup();
+        }
+        document.addEventListener('keydown', onEsc);
+
+        overlay.onclick=function(e){
+            // 확대 동작 중이었으면 닫지 않음
+             if (!isZooming && !justZoomed) {
+                closePopup();
+             }
         };
     };
     imgWrapper.appendChild(img);
@@ -685,23 +961,44 @@
                              e.preventDefault();
                              var p = this.getAttribute('data-plate');
                              var carInfo=qs('#car-information-container');
+                             
+                             function findDiscountBtn() {
+                                 var b = Array.from(document.querySelectorAll('button'));
+                                 return b.find(function(x){ return (x.textContent||'').trim().indexOf('자동할인 적용')>=0 || (x.textContent||'').trim().indexOf('자동할인')>=0; });
+                             }
+
                              if(carInfo){
                                 var input=qs('#carplate .edit-input',carInfo);
                                 var save=qs('#carplate button[data-action="save-carplate"]',carInfo);
                                 var edit=qs('#carplate button[data-action="edit-carplate"]',carInfo);
+                                
+                                function doSave(){
+                                    input.value=p;
+                                    input.dispatchEvent(new Event('input', {bubbles:true}));
+                                    input.dispatchEvent(new Event('change', {bubbles:true}));
+                                    setTimeout(function(){
+                                        save.click();
+                                        if(typeof notify==='function')notify('번호판 변경',p);
+                                        
+                                        if(S.autoDiscountEnabled){
+                                            setTimeout(function(){
+                                                var discBtn = findDiscountBtn();
+                                                if(discBtn){
+                                                    discBtn.click();
+                                                    if(typeof notify==='function')notify('자동할인', '자동할인이 적용되었습니다.');
+                                                }
+                                            }, 500);
+                                        }
+                                    }, 200);
+                                }
+
                                 if(input&&save){
                                     if(edit && getComputedStyle(input).display==='none'){
                                         edit.click();
+                                        setTimeout(doSave, 150);
+                                    } else {
+                                        doSave();
                                     }
-                                    setTimeout(function(){
-                                         input.value=p;
-                                         input.dispatchEvent(new Event('input', {bubbles:true}));
-                                         input.dispatchEvent(new Event('change', {bubbles:true}));
-                                         setTimeout(function(){
-                                             save.click();
-                                             if(typeof notify==='function')notify('번호판 변경',p);
-                                         }, 200);
-                                    },100);
                                 } else {
                                     alert('차량 정보 패널(사이드바)을 찾을 수 없습니다.');
                                 }
@@ -749,7 +1046,22 @@
         return orig.apply(this,arguments);
     };
   }
-  function Ainit(){AwrapGetParkingRecordOne();runOnce(false);observeTable();restart();SinitSidebar();AinitAlarmNotify();AinitAlarmNavigate();AapplyAlarmNavigationOnLoad();applyStatusHighlightTable();HinitEntryImagePreview();CobserveCarInfo();UobserveUnpaidMode();FobserveRowClicks()}
+  function Ainit(){AwrapGetParkingRecordOne();runOnce(false);observeTable();restart();SinitSidebar();AinitAlarmNotify();AinitAlarmNavigate();AapplyAlarmNavigationOnLoad();applyStatusHighlightTable();HinitEntryImagePreview();CobserveCarInfo();UobserveUnpaidMode();FobserveRowClicks();MinitFeeModalEsc();fixPasswordAutocomplete()}
+  
+  function fixPasswordAutocomplete(){
+    function fix(){
+      var pwds=document.querySelectorAll('input[type="password"]:not([autocomplete])');
+      for(var i=0;i<pwds.length;i++) pwds[i].setAttribute('autocomplete','new-password');
+    }
+    fix();
+    // 모달 등이 동적으로 뜰 수 있으므로 body 관찰
+    var obs=new MutationObserver(function(ms){
+      var ch=false;
+      for(var i=0;i<ms.length;i++)if(ms[i].addedNodes.length){ch=true;break}
+      if(ch)fix();
+    });
+    obs.observe(document.body,{childList:true,subtree:true});
+  }
   function ready(){if(document.readyState==='complete'||document.readyState==='interactive'){Ainit()}else{document.addEventListener('DOMContentLoaded',Ainit)}};TMmasterUI()
   function TMmasterUI(){
     if(document.querySelector('.tm-master-btn'))return;
@@ -795,18 +1107,21 @@
                  '<label style="display:block;margin-bottom:4px;cursor:pointer"><input type="checkbox" id="tm_entry_preview" style="vertical-align:middle"> 입차 사진 미리보기</label>'+
                  '<label style="display:block;margin-bottom:4px;cursor:pointer;padding-left:16px"><input type="checkbox" id="tm_entry_preview_split" style="vertical-align:middle"> └ 미리보기+이력 분할</label>'+
                  '<label style="display:block;margin-top:4px;cursor:pointer"><input type="checkbox" id="tm_sidebar_toggle" style="vertical-align:middle"> 좌측 사이드바/헤더 숨김 버튼 사용</label>'+
+                 '<label style="display:block;margin-top:2px;cursor:pointer;padding-left:16px"><input type="checkbox" id="tm_sidebar_alarm_mode" style="vertical-align:middle"> └ 사이드 대신 알람 사용</label>'+
                  '<label style="display:block;margin-top:4px;cursor:pointer"><input type="checkbox" id="tm_row_click_fee" style="vertical-align:middle"> 행 클릭 시 요금페이지 열기</label>'+
                '</div>'+
                '<div class="tm-tab-panel tm-tab-panel-conv" style="display:none;margin-top:4px">'+
                  '<label style="display:block;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="tm_show_pair" style="vertical-align:middle"> 페어 탐지 패널 표시</label>'+
                  '<label style="display:block;margin-bottom:4px;cursor:pointer"><input type="checkbox" id="tm_img_popup" style="vertical-align:middle"> 이미지 팝업 사용</label>'+
                  '<label style="display:block;margin-bottom:4px;cursor:pointer"><input type="checkbox" id="tm_plate_edit" style="vertical-align:middle"> 번호판 수정 사용</label>'+
+                 '<label style="display:block;margin-bottom:4px;cursor:pointer"><input type="checkbox" id="tm_auto_discount" style="vertical-align:middle"> 번호 변경 시 자동할인 적용</label>'+
                  '<label style="display:block;margin-bottom:4px;cursor:pointer"><input type="checkbox" id="tm_10min_btn" style="vertical-align:middle"> 10분 처리 버튼 표시</label>'+
                 '<label style="display:block;margin-bottom:4px;cursor:pointer"><input type="checkbox" id="tm_unpaid_mode" style="vertical-align:middle"> 미납 처리 모드</label>'+
                 '<label style="display:block;margin-bottom:4px;cursor:pointer"><input type="checkbox" id="tm_auto_alarm" style="vertical-align:middle"> 알람 자동 새로고침</label>'+
                 '<label style="display:block;margin-bottom:4px;padding-left:16px">간격: <select id="tm_auto_alarm_int"><option value="3000">3초</option><option value="5000">5초</option><option value="10000">10초</option><option value="30000">30초</option><option value="60000">60초</option></select></label>'+
                 '<label style="display:block;margin-bottom:4px;cursor:pointer;margin-top:8px;border-top:1px solid #ddd;padding-top:4px"><input type="checkbox" id="tm_desk_notify" style="vertical-align:middle"> 윈도우(시스템) 알림 사용</label>'+
                 '<div style="margin-top:6px"><button type="button" id="tm_notify_perm" class="btn btn-xs btn-default">알림 권한 요청</button> <button type="button" id="tm_notify_test" class="btn btn-xs btn-info" style="margin-left:5px">테스트 알림</button></div>'+
+                '<label style="display:block;margin-top:8px;border-top:1px solid #ddd;padding-top:4px;cursor:pointer"><input type="checkbox" id="tm_debug_mode" style="vertical-align:middle"> 디버그 모드 사용 (로그 출력)</label>'+
                '</div>';
       
       document.body.insertAdjacentHTML('beforeend',html);
@@ -817,6 +1132,7 @@
       var cbStatus=qs('#tm_status_highlight',p);
       var cbImg=qs('#tm_img_popup',p);
       var cbPlate=qs('#tm_plate_edit',p);
+      var cbAutoDiscount=qs('#tm_auto_discount',p);
       var cb10Min=qs('#tm_10min_btn',p);
       var cbCustomAlarm=qs('#tm_custom_alarm',p);
       var cbUnpaidMode=qs('#tm_unpaid_mode',p);
@@ -828,7 +1144,9 @@
       var cbEntry=qs('#tm_entry_preview',p);
       var cbEntrySplit=qs('#tm_entry_preview_split',p);
       var cbSidebar=qs('#tm_sidebar_toggle',p);
+      var cbSidebarAlarm=qs('#tm_sidebar_alarm_mode',p);
       var cbRowClick=qs('#tm_row_click_fee',p);
+      var cbDebug=qs('#tm_debug_mode',p);
       var darkApi=window.__tmDark||null;
       var tabBtns=qsa('.tm-tab-btn',p);
       var uiPanel=qs('.tm-tab-panel-ui',p);
@@ -907,6 +1225,13 @@
           S.plateEditEnabled=e.target.checked;
           save();
           Uobserve();
+        });
+      }
+      if(cbAutoDiscount){
+        cbAutoDiscount.checked=S.autoDiscountEnabled===true;
+        cbAutoDiscount.addEventListener('change',function(e){
+          S.autoDiscountEnabled=e.target.checked;
+          save();
         });
       }
       if(cb10Min){
@@ -1000,6 +1325,14 @@
           if(window.__tmSidebar&&typeof window.__tmSidebar.apply==='function')window.__tmSidebar.apply();
         });
       }
+      if(cbSidebarAlarm){
+        cbSidebarAlarm.checked=S.sidebarAlarmMode===true;
+        cbSidebarAlarm.addEventListener('change',function(e){
+          S.sidebarAlarmMode=e.target.checked;
+          save();
+          if(window.__tmSidebar&&typeof window.__tmSidebar.apply==='function')window.__tmSidebar.apply();
+        });
+      }
       if(cbRowClick){
         cbRowClick.checked=S.rowClickFeePageEnabled!==false;
         cbRowClick.addEventListener('change',function(e){
@@ -1018,9 +1351,16 @@
       if(selAutoAlarmInt){
         selAutoAlarmInt.value=S.autoAlarmInterval||10000;
         selAutoAlarmInt.addEventListener('change',function(e){
-          S.autoAlarmInterval=parseInt(e.target.value);
+          S.autoAlarmInterval=e.target.value;
           save();
           startAutoAlarmInterval();
+        });
+      }
+      if(cbDebug){
+        cbDebug.checked=S.debugMode===true;
+        cbDebug.addEventListener('change',function(e){
+          S.debugMode=e.target.checked;
+          save();
         });
       }
       if(cbDeskNotify){
@@ -1431,6 +1771,24 @@
     obs.observe(document.body,{childList:true,subtree:true});
   }
   MobserveModal();
+  
+  function MinitFeeModalEsc(){
+    if(document.__tm_fee_esc)return;
+    document.__tm_fee_esc=true;
+    document.addEventListener('keydown',function(e){
+      if(e.key==='Escape'){
+        if(document.querySelector('.tm-zoom-overlay'))return;
+        var modal=qs('#modal_fee_info');
+        if(modal&&getComputedStyle(modal).display!=='none'){
+          var close=qs('.close',modal)||qs('button[data-dismiss="modal"]',modal)||qs('.modal-footer .btn-default',modal);
+          if(close){
+            e.preventDefault();
+            close.click();
+          }
+        }
+      }
+    });
+  }
 
   function Rpanel(){if(!RisPage())return;var el=qs('.tm-review-panel');var html='<div class="tm-review-panel"><label><input type="checkbox" id="tm_auto_mark"> CCTV 클릭시 자동 검토표시</label><label style="margin-left:6px"><input type="checkbox" id="tm_img_enable"> 이미지 비교 사용</label><label style="margin-left:6px">임계 <select id="tm_img_thres"><option value="6">6</option><option value="10">10</option><option value="16">16</option></select></label><button id="tm_next" class="btn btn-xs btn-warning">다음검토</button><button id="tm_clear" class="btn btn-xs btn-gray">초기화</button><span style="margin-left:8px">검토표시: '+Rmarks.size+'개</span></div>';if(el)el.outerHTML=html;else document.body.insertAdjacentHTML('beforeend',html);el=qs('.tm-review-panel');var cb=qs('#tm_auto_mark');if(cb){cb.checked=!!Rs.autoMark;cb.addEventListener('change',function(e){Rs.autoMark=e.target.checked;Rsave()})}var ie=qs('#tm_img_enable');if(ie){ie.checked=!!Rs.imgCompareEnable;ie.addEventListener('change',function(e){Rs.imgCompareEnable=e.target.checked;Rsave()})}var th=qs('#tm_img_thres');if(th){th.value=String(Rs.imgCompareThreshold||10);th.addEventListener('change',function(e){Rs.imgCompareThreshold=Number(e.target.value);Rsave()})}var nxt=qs('#tm_next');if(nxt){nxt.addEventListener('click',function(){Rnext()})}var clr=qs('#tm_clear');if(clr){clr.addEventListener('click',function(){Rmarks=new Set();RsaveMarks();Rrefresh()})}}
   function Rnext(){if(!RisPage())return;var table=findTable();if(!table)return;var tbody=table.querySelector('#tbody_list')||table.querySelector('tbody')||table;var trs=qsa('tr',tbody);for(var i=0;i<trs.length;i++){var tr=trs[i];var key=RgetRowKey(tr);if(!key)continue;var marked=Rmarks.has(key);if(!marked){RapplyMark(tr,true);tr.scrollIntoView({behavior:'smooth',block:'center'});if(Rs.imgCompareEnable){var data=collectRows();var rows=data.rows;var r=parseRow(tr);if(r&&r.isUnpaid){var paid=RfindNearestPaidRow(r,rows);var u1=RgetEntryImageUrl(tr);var u2=paid?RgetEntryImageUrl(paid.tr):null;if(u1&&u2){Promise.all([RaHashFromUrl(u1),RaHashFromUrl(u2)]).then(function(xs){var h1=xs[0],h2=xs[1];var d=Rhamming(h1,h2);if(d!=null){var ok=d<=Rs.imgCompareThreshold;notify(ok?'이미지 일치':'이미지 불일치','해밍거리 '+d+'/64')}})}}}return}}notify('검토 완료','모든 행이 검토되었습니다')}
@@ -1685,6 +2043,13 @@ function UinitUndefined(){
 
     if(S.plateEditEnabled===false)return;
 
+    function findButtonByText(text) {
+        var btns = Array.from(document.querySelectorAll('button'));
+        return btns.find(function(b) {
+            return (b.textContent || '').trim().indexOf(text) >= 0;
+        });
+    }
+
     if(saveBtn&&!saveBtn.__tm_history_hook){
       saveBtn.__tm_history_hook=true;
       saveBtn.addEventListener('click',function(){
@@ -1697,6 +2062,17 @@ function UinitUndefined(){
         }
         if(lot!=null&&spot!=null){
            TM_PlateHistory.add(lot,spot,v);
+        }
+        
+        // 자동할인 적용 로직
+        if(S.autoDiscountEnabled){
+            setTimeout(function(){
+                var discountBtn = findButtonByText('자동할인 적용') || findButtonByText('자동할인');
+                if(discountBtn){
+                    discountBtn.click();
+                    if(typeof notify==='function') notify('자동할인', '자동할인이 적용되었습니다.');
+                }
+            }, 500); // 저장 처리 시간 고려
         }
       });
     }
@@ -1742,6 +2118,21 @@ function UinitUndefined(){
     try{
         var s=sessionStorage.getItem(seenKey);
         seen=s?new Set(JSON.parse(s)):new Set();
+
+        // 페이지 로드 시(또는 초기화 시) 저장된(kept) 알람은 '이미 본 알람' 목록에서 제거하여
+        // 스캔 시 다시 알림(Windows 팝업 포함)이 발생하도록 함
+        try {
+            var kept = JSON.parse(localStorage.getItem('tm_kept_alarms') || '{}');
+            for (var kid in kept) {
+                var item = kept[kid];
+                // 키 생성 규칙: (typeDescription||'') + '|' + id
+                // item.id는 숫자일 수 있으므로 문자열 변환 필요 (scan 로직과 일치)
+                var k = (item.typeDescription || '') + '|' + item.id;
+                if (seen.has(k)) {
+                    seen.delete(k);
+                }
+            }
+        } catch (e) {}
     }catch(e){seen=new Set()}
 
     function saveSeen(){
@@ -1758,23 +2149,162 @@ function UinitUndefined(){
     function findMenu(){
       return qs('.dropdown-menu[aria-labelledby="dropdownAlarm"]')||qs('#alarmTabContent')?.closest('.dropdown-menu')||null;
     }
+    
+    // 알람 링크 클릭 시 동작 재정의 (삭제/이동 방지)
+    window.resolveAlarmLink = function(el){
+        // 삭제 버튼 클릭 시 동작 방지 (resolveAlarmLink 실행 안함)
+        if(window.event && window.event.target && window.event.target.closest('.btn_del')) return;
+
+        var id=el.getAttribute('data-id');
+        if(!id)return;
+        
+        // 1. 읽음 표시 (시각적)
+        var li=el.closest('li');
+        if(li) li.classList.add('tm-checked');
+        
+        // 2. 로컬 스토리지에 읽음 상태 저장
+        try{
+            var checked=JSON.parse(localStorage.getItem('tm_alarm_checked')||'[]');
+            if(checked.indexOf(id)<0){
+                checked.push(id);
+                if(checked.length>500) checked=checked.slice(checked.length-500);
+                localStorage.setItem('tm_alarm_checked',JSON.stringify(checked));
+            }
+        }catch(e){}
+        
+        // 3. 현재 페이지에서 타겟 찾아서 스크롤 (API 호출 및 네비게이션 방지)
+        var tit=el.textContent.trim();
+        var li=el.closest('li');
+        var subtitEl=li?li.querySelector('.subtit'):null;
+        var sub=subtitEl?subtitEl.textContent.trim():'';
+        var tmEl=li?li.querySelector('.time'):null;
+        var tmTxt=tmEl?tmEl.textContent.trim():'';
+        
+        // 클릭된 알람 내용 저장 (이동 후 복원용)
+        // 캐시된 데이터에서 원본 객체 찾기 시도
+        var savedItem = null;
+        if(window.__tm_last_alarms && window.__tm_last_alarms.length){
+            for(var k=0; k<window.__tm_last_alarms.length; k++){
+                if(String(window.__tm_last_alarms[k].id) === String(id)){
+                    savedItem = window.__tm_last_alarms[k];
+                    break;
+                }
+            }
+        }
+
+        try{
+            var kept=JSON.parse(localStorage.getItem('tm_kept_alarms')||'{}');
+            
+            if(savedItem){
+                kept[id] = savedItem; // 원본 객체 저장
+            } else {
+                // DOM에서 추출 (fallback)
+                kept[id]={
+                    id: parseInt(id),
+                    typeDescription: tit,
+                    compName: '', 
+                    lotName: sub, 
+                    dateDiffFromNow: tmTxt,
+                    readAt: new Date().toISOString()
+                };
+            }
+            
+            // 너무 많으면 정리
+            var keys=Object.keys(kept);
+            if(keys.length>100){
+                delete kept[keys[0]];
+            }
+            localStorage.setItem('tm_kept_alarms',JSON.stringify(kept));
+        }catch(e){}
+
+        // 시간 파싱
+        var now=Date.now();
+        var alarmTime=null;
+        if(/방금/.test(tmTxt)) alarmTime=now;
+        else{
+            var mMin=tmTxt.match(/(\d+)\s*분/);
+            var mHour=tmTxt.match(/(\d+)\s*시간/);
+            if(mMin) alarmTime=now-parseInt(mMin[1])*60000;
+            else if(mHour) alarmTime=now-parseInt(mHour[1])*3600000;
+        }
+        
+        var rows=getRowsCached();
+        var candidates=[];
+        
+        for(var i=0;i<rows.length;i++){
+             var r=rows[i];
+             var rTxt=r.tr.innerText;
+             var matched=false;
+             if(/\d{2,}[가-힣]\d{4}/.test(tit)){
+                 if(rTxt.indexOf(tit)>=0) matched=true;
+             } else {
+                 if(sub && rTxt.indexOf(sub)>=0) matched=true;
+             }
+             if(matched) candidates.push(r);
+        }
+        
+        var target=null;
+        if(candidates.length && alarmTime){
+             var best=pickBestByTime(candidates, {alarmTime: alarmTime});
+             if(best) target=best.tr;
+        }
+        if(!target && candidates.length) target=candidates[0].tr;
+        
+        if(target){
+             target.scrollIntoView({behavior:'smooth',block:'center'});
+             var prev=window.__tm_lastAlarmClicked;
+             if(prev) prev.classList.remove('tm-alarm-clicked');
+             target.classList.add('tm-alarm-clicked');
+             window.__tm_lastAlarmClicked=target;
+             setTimeout(function(){target.classList.remove('tm-alarm-clicked')},3000);
+        } else {
+            // 현재 페이지에 없으면 서버 호출 (이동 URL 획득용)
+            // 단, 이미 URL을 알고 있다면 호출 생략 가능 (li a href 확인)
+            var anchor = li ? li.querySelector('a[href]') : null;
+            if(anchor && anchor.href && anchor.href.indexOf('javascript') < 0 && anchor.href.indexOf('#') < 0) {
+                 window.location.href = anchor.href;
+                 return;
+            }
+
+            tmLog('[TM] Target not found on current page, trying API link');
+            // API를 통해 링크를 가져와서 이동 시도
+            fetch('/alarm/resolveAlarmLink/'+id, {
+                method: 'PATCH',
+                headers: {'Content-Type': 'application/json'}
+            }).then(function(res){
+                if(res.ok) return res.json();
+                throw new Error('Network response was not ok');
+            }).then(function(data){
+                if(data.link){
+                     var url=data.link.replace(/&amp;/g, '&');
+                     window.location.href=url;
+                }
+            }).catch(function(e){tmLog('[TM] resolveAlarmLink error', e)});
+        }
+    };
+
     function clearAlarmHighlight(){
-      var menu=findMenu();
-      if(!menu)return;
-      var items=qsa('.alarm_lst li',menu);
+      var items=document.querySelectorAll('.alarm_lst li');
       for(var i=0;i<items.length;i++){
         items[i].classList.remove('tm-status-paid','tm-status-free','tm-status-before','tm-status-unpaid','tm-status-undefined');
       }
     }
     function scan(){
-      var menu=findMenu();
-      console.log('[TM-ALARM] scan start', {hasMenu: !!menu});
-      if(!menu)return;
-      clearAlarmHighlight();
-      var items=qsa('.alarm_lst li',menu);
-      console.log('[TM-ALARM] scan items', {count: items.length});
+      var items=document.querySelectorAll('.alarm_lst li');
+      tmLog('[TM-ALARM] scan start', {count: items.length, location: S.sidebarAlarmMode?'sidebar/mixed':'default'});
+      
+      clearAlarmHighlight(); // 이 함수도 수정 필요할 수 있음 (menu 의존성)
+      
+      var checked=[];
+      try{checked=JSON.parse(localStorage.getItem('tm_alarm_checked')||'[]')}catch(e){}
+      
       var newCount=0;
       for(var i=0;i<items.length;i++){
+        var id=items[i].getAttribute('data-id');
+        if(id && checked.indexOf(id)>=0){
+             items[i].classList.add('tm-checked');
+        }
+
         var tit=qs('.tit',items[i]);
         var txt=(tit&&tit.textContent||'').trim();
         var tmEl=qs('.time',items[i]);
@@ -1796,30 +2326,103 @@ function UinitUndefined(){
         if(!seen.has(key)){
           seen.add(key);
           newCount++;
-          console.log('[TM-ALARM] scan new alarm', {text: txt, time: tm, key: key});
+          tmLog('[TM-ALARM] scan new alarm', {text: txt, time: tm, key: key});
           
           // 클릭 시 이동할 URL 찾기
           var link=items[i].querySelector('a');
           var url=link?link.href:null;
           
-          notify('알람',txt+(tm?' • '+tm:''), url);
+          notify('알람',txt+(tm?' • '+tm:''), url, true);
         }
       }
       if(newCount>0) saveSeen();
-      console.log('[TM-ALARM] scan end', {seenCount: seen.size, newCount: newCount});
+      tmLog('[TM-ALARM] scan end', {seenCount: seen.size, newCount: newCount});
     }
+
+    // 알람 삭제(완료) 버튼 클릭 시 kept 목록에서 제거하여 사라지게 함
+    document.addEventListener('click',function(e){
+        var target=e.target;
+        var btn=target.closest('.btn_del');
+        if(btn){
+            var li=btn.closest('li');
+            if(li){
+                var id=li.getAttribute('data-id');
+                if(id){
+                    tmLog('[TM-ALARM] delete button clicked', {id: id});
+                    try{
+                        var kept=JSON.parse(localStorage.getItem('tm_kept_alarms')||'{}');
+                        if(kept[id]){
+                            delete kept[id];
+                            localStorage.setItem('tm_kept_alarms',JSON.stringify(kept));
+                            tmLog('[TM-ALARM] removed from kept list', {id: id});
+                            
+                            // UI에서도 즉시 제거 (선택사항, 리렌더링 전 시각적 피드백)
+                            li.style.display='none';
+                        }
+                    }catch(err){
+                        tmLog('[TM-ALARM] error removing from kept list', err);
+                    }
+                }
+            }
+        }
+    });
+
     var obs=new MutationObserver(function(){scan()});
     obs.observe(document.body,{childList:true,subtree:true});
     var bell=qs('#dropdownAlarm');
     if(bell&&!bell.__tm_notify_hook){bell.__tm_notify_hook=true;bell.addEventListener('click',function(){setTimeout(scan,50)})}
     var orig=window.refreshAlarmContents;
     if(typeof orig==='function'&&!orig.__tm_wrap){
-      var w=function(){var r=orig.apply(this,arguments);setTimeout(scan,80);return r};
+      var w=function(){
+          var r=orig.apply(this,arguments);
+          // refreshAlarmContents가 Promise를 반환하는 경우
+          if(r && typeof r.then === 'function'){
+              r.then(function(){
+                  setTimeout(function(){
+                      if(S.sidebarAlarmMode && window.__tmSidebar && typeof window.__tmSidebar.apply==='function'){
+                          window.__tmSidebar.apply(); // 사이드바 내용 갱신 (새로운 리스트 이동)
+                      }
+                      scan(); // 알람 스캔 (새로운 리스트에서)
+                  }, 100);
+              });
+          } else {
+              // Promise가 아닌 경우 (구버전 호환)
+              setTimeout(function(){
+                  if(S.sidebarAlarmMode && window.__tmSidebar && typeof window.__tmSidebar.apply==='function'){
+                      window.__tmSidebar.apply();
+                  }
+                  scan();
+              }, 200);
+          }
+          return r;
+      };
       w.__tm_wrap=true;
       window.refreshAlarmContents=w;
     }
     setInterval(scan,5000);
     scan();
+
+    // 페이지 로드 시 알람 목록 강제 갱신 (저장된 알람 표시용)
+    // 원래 로직은 알람 개수가 변해야만 갱신하지만, 우리는 '저장된(kept)' 알람을 보여주기 위해 강제로 렌더링을 유발해야 함
+    setTimeout(function(){
+        if(typeof window.refreshAlarmContents==='function'){
+            tmLog('[TM-ALARM] Force refreshing alarm contents on load');
+            var p = window.refreshAlarmContents();
+            if(p && typeof p.then === 'function'){
+                p.then(function(){
+                    try{
+                        var kept=JSON.parse(localStorage.getItem('tm_kept_alarms')||'{}');
+                        if(Object.keys(kept).length > 0){
+                             var dd=document.querySelector('#alarmDropdown');
+                             if(dd) dd.classList.add('open');
+                             var menu=document.querySelector('#alarmDropdown .dropdown-menu');
+                             if(menu) menu.style.display='block';
+                        }
+                    }catch(e){}
+                });
+            }
+        }
+    }, 1000);
   }
 
   startAutoAlarmInterval();
