@@ -6,8 +6,8 @@
 // @author       User
 // @match        *://pms.parkingplusai.com/*
 // @grant        none
-// @updateURL    https://example.com/newtime.js
-// @downloadURL  https://example.com/newtime.js
+// @updateURL    https://raw.githubusercontent.com/CheaterMer/PMS/refs/heads/main/PMS%20Helper.js
+// @downloadURL  https://raw.githubusercontent.com/CheaterMer/PMS/refs/heads/main/PMS%20Helper.js
 // ==/UserScript==
 
 (function(){
