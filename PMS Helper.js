@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         New Time Parking System
 // @namespace    http://tampermonkey.net/
-// @version      1.1
+// @version      1.3
 // @description  Parking system enhancements: Auto-refresh, Dark mode, Shortcuts
 // @author       User
-// @match        *://pms.parkingplusai.com/*
+// @match        https://pms.parkingplusai.com/*
 // @grant        none
 // @updateURL    https://raw.githubusercontent.com/CheaterMer/PMS/refs/heads/main/PMS%20Helper.js
 // @downloadURL  https://raw.githubusercontent.com/CheaterMer/PMS/refs/heads/main/PMS%20Helper.js
@@ -1425,110 +1425,9 @@
       },50);
     }
   }
-  function MshowPlateHistory(){
-    var modal=qs('#modal_fee_info');
-    if(!modal||getComputedStyle(modal).display==='none')return;
-    var body=qs('.modal-body',modal);
-    if(!body)return;
-    if(qs('.tm-plate-history-panel',body))return;
-    
-    var lot,spot;
-    if(window.__tm_last_record_args){
-        lot=window.__tm_last_record_args.lotId;
-        spot=window.__tm_last_record_args.slotId;
-    }
-    if(lot==null||spot==null)return;
-    
-    var history=TM_PlateHistory.get(lot,spot);
-    if(!history.length)return;
-    
-    var panel=document.createElement('div');
-    panel.className='tm-plate-history-panel';
-    panel.style.cssText='padding:8px;background:#f0f8ff;border:1px solid #add8e6;border-radius:4px;margin-bottom:10px;font-size:12px;overflow-y:auto;max-height:200px';
-    
-    var html='<div style="font-weight:bold;margin-bottom:4px">최근 변경 이력 (클릭하여 적용)</div><div style="display:flex;flex-wrap:wrap;gap:4px">';
-    history.forEach(function(h){
-        html+='<button type="button" class="btn btn-xs btn-default tm-history-btn" data-plate="'+h.plate+'" style="margin-right:4px;margin-bottom:4px">'+h.plate+'</button>';
-    });
-    html+='</div>';
-    panel.innerHTML=html;
 
-    // 이미지 영역 찾아서 레이아웃 변경 (50:50)
-    var imgContainer = null;
-    var imgs = body.querySelectorAll('img');
-    for(var i=0; i<imgs.length; i++){
-        if(imgs[i].clientWidth > 100 || imgs[i].src.indexOf('blob')>=0 || imgs[i].src.indexOf('http')>=0){
-            var p = imgs[i].parentElement;
-            // body의 직계 자식이거나 그 근처인 div 찾기
-            while(p && p.parentElement !== body && !p.classList.contains('row') && !p.classList.contains('col-12')){
-                p = p.parentElement;
-            }
-            if(p) { imgContainer = p; break; }
-        }
-    }
-    
-    if(imgContainer){
-        imgContainer.style.width = '50%';
-        imgContainer.style.float = 'left';
-        imgContainer.style.display = 'inline-block';
-        imgContainer.style.verticalAlign = 'top';
-        
-        panel.style.width = '48%';
-        panel.style.float = 'left';
-        panel.style.display = 'inline-block';
-        panel.style.verticalAlign = 'top';
-        panel.style.marginLeft = '2%';
-        panel.style.marginTop = '0';
-        
-        if(imgContainer.nextSibling){
-            body.insertBefore(panel, imgContainer.nextSibling);
-        } else {
-            body.appendChild(panel);
-        }
-        
-        var clear = document.createElement('div');
-        clear.style.clear = 'both';
-        if(panel.nextSibling) body.insertBefore(clear, panel.nextSibling);
-        else body.appendChild(clear);
-    } else {
-        body.insertBefore(panel,body.firstChild);
-    }
-    
-    var btns=qsa('.tm-history-btn',panel);
-    for(var i=0;i<btns.length;i++){
-        btns[i].addEventListener('click',function(e){
-            e.preventDefault();
-            var p=this.getAttribute('data-plate');
-            var carInfo=qs('#car-information-container');
-            if(carInfo){
-                var input=qs('#carplate .edit-input',carInfo);
-                var save=qs('#carplate button[data-action="save-carplate"]',carInfo);
-                var edit=qs('#carplate button[data-action="edit-carplate"]',carInfo);
-                
-                if(input&&save){
-                    if(edit && getComputedStyle(input).display==='none'){
-                        edit.click();
-                    }
-                    setTimeout(function(){
-                         input.value=p;
-                         input.dispatchEvent(new Event('input', {bubbles:true}));
-                         input.dispatchEvent(new Event('change', {bubbles:true}));
-                         setTimeout(function(){
-                             save.click();
-                             if(typeof notify==='function')notify('번호판 변경',p);
-                         }, 200);
-                    },100);
-                } else {
-                    alert('차량 정보 패널(사이드바)을 찾을 수 없습니다.');
-                }
-            } else {
-                alert('차량 정보 패널(사이드바)이 없습니다.');
-            }
-        });
-    }
-  }
   function MobserveModal(){
-    var obs=new MutationObserver(function(){MinjectFeeModalButton();MshowPlateHistory()});
+    var obs=new MutationObserver(function(){MinjectFeeModalButton()});
     obs.observe(document.body,{childList:true,subtree:true});
   }
   MobserveModal();
