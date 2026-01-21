@@ -1,20 +1,20 @@
-# Recent Changes Log
+# 최근 변경 내역
 
-## 1. Alarm Auto-Refresh Improvements
-- **Auto-Refresh Logic**: Validated and verified the periodic alarm scanning mechanism (`startAutoAlarmInterval`).
-- **Toggle Support**: The feature respects the internal `autoAlarm` setting.
+## 1. 알람 자동 새로고침 기능 개선
+- **자동 새로고침 로직**: 주기적인 알람 스캔 메커니즘(`startAutoAlarmInterval`)을 검증하고 확인했습니다.
+- **토글 지원**: 내부 `autoAlarm` 설정값에 따라 기능이 올바르게 켜지고 꺼지도록 수정했습니다.
 
-## 2. System Notification (Window Popup) Enhancements
-- **New Toggle Control**: Added "윈도우(시스템) 알림 사용" (Use Window System Notification) checkbox in the **TM Settings > Convenience** tab.
-  - Users can now explicitly choose between native OS notifications and default HTML toasts.
-- **Test Feature**: Added a "테스트 알림" (Test Notification) button to help users verify browser permissions and notification visibility.
-- **Permission Management**: Enhanced the permission request flow to alert users if notifications are blocked by the browser.
-- **Interactive Notifications**: Clicking on a system notification window now automatically navigates to the corresponding alarm event's detail page.
+## 2. 시스템 알림(윈도우 팝업) 기능 강화
+- **새로운 제어 옵션 추가**: **TM설정 > 편의기능** 탭에 "윈도우(시스템) 알림 사용" 체크박스를 추가했습니다.
+  - 이제 사용자가 브라우저 자체 알림(HTML 토스트)과 윈도우 시스템 알림 중 명확하게 선택할 수 있습니다.
+- **테스트 기능**: 브라우저 권한 및 알림 표시 여부를 확인할 수 있는 "테스트 알림" 버튼을 추가했습니다.
+- **권한 관리**: 브라우저에서 알림이 차단된 경우 사용자에게 경고 메시지를 표시하여 설정을 유도하도록 개선했습니다.
+- **상호작용 알림**: 윈도우 시스템 알림 클릭 시 해당 알람 이벤트의 상세 페이지로 자동 이동하는 기능을 구현했습니다.
 
-## 3. Alarm Logic Optimization
-- **Duplicate Prevention**: Implemented a tracking system using a `Set` data structure to record seen alarms.
-  - Prevents the same alarm event from triggering repetitive notifications.
-  - Identifies unique alarms using a combination of alarm text and ID.
+## 3. 알람 로직 최적화
+- **중복 방지**: `Set` 자료구조를 활용한 알람 추적 시스템을 구현했습니다.
+  - 동일한 알람 이벤트가 반복적으로 알림을 발생시키는 것을 방지합니다.
+  - 알람 텍스트와 ID를 조합하여 고유한 알람을 식별합니다.
 
-## 4. UI Cleanup
-- **Removed History Panel**: Completely removed the "Recent Edit History" (`MshowPlateHistory`) panel from the parking fee information modal, as it was deemed redundant with the entry photo display.
+## 4. UI 정리
+- **변경 이력 패널 삭제**: 주차 요금 정보 모달에서 "최근 변경 이력"(`MshowPlateHistory`) 패널을 완전히 제거했습니다. (입차 사진 표시와 기능이 중복되어 불필요함)
